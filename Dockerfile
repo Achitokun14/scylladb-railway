@@ -1,18 +1,28 @@
-# DEPRECATED: Please use the versioned Dockerfile(s) instead!
+# ScyllaDB for Railway - Fixed for external CQL connections
+# We use 5.1.4 specifically because newer versions have broken IPv6 support
+# See: https://github.com/scylladb/scylladb/issues/14738
 FROM scylladb/scylla:5.1.4
 
-ARG SEEDS
-ARG SMP
-ARG MEM
-ARG OVERPROV
-ARG API_ADDR
-ARG LISTEN_ADDR
+# Install envsubst for template processing
+RUN rm -rf /var/cache/apt/archives && \
+    apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y gettext && \
+    rm -rf /var/lib/apt/lists/*
 
-ENV SEEDS=$SEEDS
-ENV SMP=$SMP
-ENV MEM=$MEM
-ENV OVERPROV=$OVERPROV
-ENV API_ADDR=$API_ADDR
-ENV LISTEN_ADDR=$LISTEN_ADDR
+# Copy configuration files
+COPY wrapper.sh /usr/local/bin/wrapper.sh
+COPY scylla.yaml /etc/scylla/scylla.template.yaml
 
-ENTRYPOINT /docker-entrypoint.py --smp "${SMP:-2}" --memory "${MEM:-2G}" --overprovisioned "${OVERPROV:-1}" --api-address "${API_ADDR:-::}" --listen-address "${LISTEN_ADDR:-::}" --rpc-address "${LISTEN_ADDR:-::}" --alternator-address "${LISTEN_ADDR:-::}"
+RUN chmod +x /usr/local/bin/wrapper.sh
+
+# Expose CQL native transport port
+EXPOSE 9042
+
+ENTRYPOINT ["/usr/local/bin/wrapper.sh"]
+CMD ["scylladb"]
+
+# Healthcheck - verify CQL is responding
+# Use localhost since we're checking from inside the container
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD cqlsh localhost 9042 -e "DESCRIBE KEYSPACES" || exit 1
